@@ -26,9 +26,11 @@ image = (
     .add_local_dir("backend", remote_path="/root/backend")
 )
 
+
 def decode_image(b64: str) -> Image.Image:
     data = base64.b64decode(b64)
     return Image.open(io.BytesIO(data)).convert("RGB")
+
 
 @app.cls(
     image=image,
@@ -46,10 +48,18 @@ class Pipeline:
 
     @modal.fastapi_endpoint(method="POST")
     def infer(self, payload: dict):
-
-        pil_img = decode_image(payload["image_b64"])
-        query = payload["query"]
-
-        result = self.pipeline.detect_and_rank(pil_img, query)
-
-        return result
+        try:
+            pil_img = decode_image(payload["image_b64"])
+            query = payload["query"]
+            result = self.pipeline.detect_and_rank(pil_img, query)
+            return result
+        except Exception as e:
+            # Always return a valid JSON so test_request.py gets a 200
+            # and can print the error rather than a raw 500 HTML page
+            return {
+                "best_box": None,
+                "clip_score": 0.0,
+                "num_candidates": 0,
+                "image": None,
+                "error": str(e),
+            }
