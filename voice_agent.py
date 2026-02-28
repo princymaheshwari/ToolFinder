@@ -149,33 +149,88 @@ _description_cache: dict = {}
 _gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 # Hardcoded fallbacks used when Gemini API is unavailable.
-# Richer than bare tool names so DINO/CLIP still get useful visual context.
+# Each description is deliberately shape/color-specific so DINO can distinguish
+# the target tool from other objects that share its material (metal, plastic, etc).
 _TOOL_FALLBACKS = {
-    "hammer":       "steel claw hammer",
-    "wrench":       "adjustable metal wrench",
-    "pliers":       "metal slip joint pliers",
-    "screwdriver":  "flathead metal screwdriver",
-    "drill":        "handheld power drill",
-    "saw":          "serrated metal hand saw",
-    "chisel":       "wooden handle steel chisel",
-    "clamp":        "c-clamp metal vise",
-    "tape measure": "yellow retractable tape measure",
-    "level":        "long flat spirit level",
+    "hammer":       "claw hammer with flat head",
+    "wrench":       "adjustable open jaw wrench",
+    "pliers":       "hinged pivot jaw pliers",
+    "screwdriver":  "long thin shaft screwdriver",
+    "drill":        "trigger grip power drill chuck",
+    "saw":          "long blade with jagged teeth",
+    "chisel":       "flat beveled blade chisel",
+    "clamp":        "c-shaped screw frame clamp",
+    "tape measure": "yellow compact retractable tape",
+    "level":        "long flat bar with bubble vial",
 }
 
-def get_tool_description(tool: str) -> str:
+_GEMINI_SYSTEM_PROMPT = """\
+You generate short visual descriptions for an AI object detector (DINO + CLIP).
+The detector will search for the described object inside a photo of a cluttered workshop.
+
+YOUR GOAL: produce a 2-4 word phrase that uniquely identifies the tool so the detector
+picks the RIGHT object and ignores everything else on the workbench.
+
+STRICT RULES — follow all of them:
+1. NEVER use the words: metal, metallic, steel, iron, tool, workshop, hand, common, typical,
+   large, small, object, item, device. These words apply to almost everything in a workshop
+   and will cause the detector to highlight the wrong objects.
+2. Focus ONLY on features that make this tool visually DISTINCT from other workshop objects:
+   - Unique SHAPE or silhouette (e.g. claw on a hammer, pivot hinge on pliers, chuck on drill)
+   - Distinctive COLOR if the tool has one (yellow tape, orange handle, red grip)
+   - A unique structural part no other tool shares (trigger on a drill, bubble vial on a level)
+3. If the user's sentence mentions a color or size modifier (e.g. "red hammer", "small pliers",
+   "blue screwdriver"), you MUST include that color/size in the output — it is the most
+   important distinguishing feature.
+4. If no color or modifier is mentioned, do NOT invent one unless the tool almost always
+   appears in a specific color (e.g. tape measures are almost always yellow/orange).
+5. Output 2-4 words ONLY. No punctuation. No explanation. No extra words.
+
+SHAPE REFERENCE (use these unique features, not generic ones):
+- hammer      → claw at back + flat striking face  (NOT "metal hammer")
+- pliers      → pivot hinge + two spreading handles + gripping jaw  (NOT "serrated metal jaws")
+- wrench      → adjustable C-shaped jaw opening  (NOT "metal wrench")
+- screwdriver → long thin narrow shaft + bulky handle  (NOT "metal screwdriver")
+- drill       → cylindrical body + front chuck + trigger  (NOT "power tool")
+- saw         → long flat blade + jagged teeth along one edge  (NOT "serrated tool")
+- chisel      → short flat angled blade + thick striking handle
+- clamp       → C or F shaped frame + threaded screw mechanism
+- tape measure→ compact square case + yellow retractable ribbon
+- level       → long flat rectangular bar + small bubble vial window
+
+EXAMPLES:
+  tool="hammer",       user said="where is my hammer"           → claw hammer flat head
+  tool="hammer",       user said="where is my red hammer"       → red claw hammer
+  tool="pliers",       user said="find the pliers"              → pivot hinge jaw pliers
+  tool="pliers",       user said="where are my short pliers"    → short pivot pliers
+  tool="drill",        user said="where is the drill"           → cylindrical drill with chuck
+  tool="tape measure", user said="find the tape"                → yellow compact tape dispenser
+  tool="screwdriver",  user said="blue screwdriver please"      → blue thin shaft screwdriver
+  tool="level",        user said="where is my level"            → flat bar bubble vial level
+"""
+
+def get_tool_description(tool: str, transcript: str = "") -> str:
     """
-    Calls Gemini once per tool name and caches the result.
-    Returns a 3-4 word visual description, e.g. "steel claw hammer".
-    Falls back to hardcoded description (then bare tool name) if the API call fails.
+    Calls Gemini once per (tool, transcript) and caches by tool name.
+    Passes the full transcript so Gemini can extract color/size modifiers.
+    Falls back to hardcoded shape-specific descriptions if the API call fails.
     """
-    if tool in _description_cache:
+    # If transcript has new color/size context, bypass cache to get a fresh description.
+    # Otherwise use the cached value so we don't burn API quota on repeated calls.
+    color_words = {"red","blue","green","yellow","orange","black","white","gray","grey",
+                   "big","small","large","short","long","tiny","thick","thin"}
+    has_modifier = any(w in transcript.split() for w in color_words)
+
+    if not has_modifier and tool in _description_cache:
         return _description_cache[tool]
 
+    user_context = f'The user said: "{transcript}"' if transcript else ""
     prompt = (
-        f"Describe a '{tool}' workshop hand tool in 3-4 words focusing on appearance only. "
-        "Reply with ONLY those words, no punctuation. "
-        "Example: for 'hammer' reply with 'steel claw hammer'"
+        f"{_GEMINI_SYSTEM_PROMPT}\n\n"
+        f"Now generate a description for:\n"
+        f"  tool = \"{tool}\"\n"
+        f"  {user_context}\n"
+        f"Output only the 2-4 word description:"
     )
 
     try:
@@ -287,7 +342,7 @@ def main():
                 continue
 
             print(f"[tool]      {tool}")
-            description = get_tool_description(tool)  # cached after first call
+            description = get_tool_description(tool, transcript=text)
 
             print("[camera]    Grabbing frame...")
             img_bytes = grab_frame()

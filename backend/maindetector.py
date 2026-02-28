@@ -40,7 +40,7 @@ image = (
 app = modal.App("detect-tools-clip", image=image)
 
 # Discard any detection CLIP scores below this — almost certainly a false positive
-CLIP_THRESHOLD = 0.24
+CLIP_THRESHOLD = 0.20
 # Maximum number of DINO boxes forwarded to SAM (keeps inference fast)
 MAX_CANDIDATES = 6
 # In description mode, only the top N DINO boxes are forwarded (descriptions match
@@ -133,9 +133,10 @@ class DetectTools:
         with torch.no_grad():
             dino_output = self.gd_model(**dino_input)
 
+        # Use a low threshold here to capture all candidates; CLIP filters later.
         results = self.gd_processor.post_process_grounded_object_detection(
             dino_output,
-            threshold=0.3,
+            threshold=0.15,
             target_sizes=[(height, width)],
             text_labels=dino_label_hint,
         )[0]
@@ -154,6 +155,9 @@ class DetectTools:
             boxes  = boxes[valid]
             scores = scores[valid]
             labels = [raw_labels[i] for i in valid]
+
+        print(f"[dino]  query='{dino_query}'  boxes_found={len(boxes)}"
+              + (f"  scores={[round(float(s),3) for s in scores]}" if len(boxes) else ""))
 
         if len(boxes) == 0:
             buf = io.BytesIO()
@@ -232,6 +236,7 @@ class DetectTools:
                 clip_scores.append((img_feats[i : i + 1] @ txt_feat.T).item())
 
         clip_scores = np.array(clip_scores)
+        print(f"[clip]  text='{description or tools}'  scores={[round(float(s),3) for s in clip_scores]}  threshold={CLIP_THRESHOLD}")
 
         # ── 4. Visualise ────────────────────────────────────────────────────
         canvas = np.array(img)
