@@ -12,16 +12,16 @@ MODELS_VOL = modal.Volume.from_name("workshop-models", create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")
+    .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0")
     .pip_install(
         "fastapi[standard]",
-        "torch",
-        "torchvision",
-        "pillow",
+        "torch==2.4.1",
+        "torchvision==0.19.1",
+        "transformers>=4.40.0",
+        "Pillow",
         "numpy",
         "opencv-python-headless",
         "open-clip-torch",
-        "transformers",
     )
     .add_local_dir("backend", remote_path="/root/backend")
 )
