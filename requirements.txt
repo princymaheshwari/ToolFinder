@@ -4,4 +4,5 @@ torchvision
 Pillow
 numpy
 transformers
-opencv-python
+opencv-python-headless
+open-clip-torch
