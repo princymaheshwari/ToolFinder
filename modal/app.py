@@ -1,4 +1,10 @@
+import base64
+import io
+from PIL import Image
+import torch
 import modal
+
+from backend.pipeline import VisionPipeline
 
 app = modal.App("workshop-finder")
 
@@ -6,6 +12,7 @@ MODELS_VOL = modal.Volume.from_name("workshop-models", create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    .apt_install("git")
     .pip_install(
         "fastapi[standard]",
         "torch",
@@ -16,15 +23,33 @@ image = (
         "open-clip-torch",
         "transformers",
     )
+    .add_local_dir("backend", remote_path="/root/backend")
 )
 
-@app.function(
+def decode_image(b64: str) -> Image.Image:
+    data = base64.b64decode(b64)
+    return Image.open(io.BytesIO(data)).convert("RGB")
+
+@app.cls(
     image=image,
     gpu="L4",
     volumes={"/models": MODELS_VOL},
     min_containers=1,
     max_containers=1,
 )
-@modal.fastapi_endpoint(method="POST")
-def infer(payload: dict):
-    return {"status": "gpu endpoint wired", "keys": list(payload.keys())}
+class Pipeline:
+
+    @modal.enter()
+    def load(self):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.pipeline = VisionPipeline(device=self.device)
+
+    @modal.fastapi_endpoint(method="POST")
+    def infer(self, payload: dict):
+
+        pil_img = decode_image(payload["image_b64"])
+        query = payload["query"]
+
+        result = self.pipeline.detect_and_rank(pil_img, query)
+
+        return result

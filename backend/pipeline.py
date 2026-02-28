@@ -1,34 +1,34 @@
-# backend/pipeline.py
-# DINO + SAM2 + CLIP logic
+import torch
+from PIL import Image
+import open_clip
 
+class VisionPipeline:
 
-def run_dino(image):
-    """Run DINO object detection on the input image."""
-    pass
+    def __init__(self, device="cuda"):
+        self.device = device
 
+        # Load CLIP only for now
+        self.clip_model, _, self.clip_preprocess = open_clip.create_model_and_transforms(
+            "ViT-B-32", pretrained="openai"
+        )
+        self.clip_tokenizer = open_clip.get_tokenizer("ViT-B-32")
 
-def run_sam2(image, boxes):
-    """Run SAM2 segmentation using bounding boxes from DINO."""
-    pass
+        self.clip_model = self.clip_model.to(self.device).eval()
 
+    @torch.inference_mode()
+    def detect_and_rank(self, image: Image.Image, query: str):
 
-def run_clip(image, masks, labels):
-    """Run CLIP to classify segmented regions."""
-    pass
+        image_tensor = self.clip_preprocess(image).unsqueeze(0).to(self.device)
+        text_tensor = self.clip_tokenizer([query]).to(self.device)
 
+        image_features = self.clip_model.encode_image(image_tensor)
+        text_features = self.clip_model.encode_text(text_tensor)
 
-def run_pipeline(image, labels):
-    """
-    Full inference pipeline: DINO -> SAM2 -> CLIP.
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
 
-    Args:
-        image: Input image (PIL or numpy array).
-        labels: List of text labels for CLIP classification.
+        similarity = (image_features @ text_features.T).item()
 
-    Returns:
-        dict with detection boxes, masks, and CLIP scores.
-    """
-    boxes = run_dino(image)
-    masks = run_sam2(image, boxes)
-    results = run_clip(image, masks, labels)
-    return results
+        return {
+            "clip_similarity": similarity
+        }
