@@ -1,0 +1,7 @@
+modal
+torch
+torchvision
+Pillow
+numpy
+transformers
+opencv-python
