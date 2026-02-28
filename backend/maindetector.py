@@ -40,9 +40,12 @@ image = (
 app = modal.App("detect-tools-clip", image=image)
 
 # Discard any detection CLIP scores below this — almost certainly a false positive
-CLIP_THRESHOLD = 0.18
+CLIP_THRESHOLD = 0.24
 # Maximum number of DINO boxes forwarded to SAM (keeps inference fast)
 MAX_CANDIDATES = 6
+# In description mode, only the top N DINO boxes are forwarded (descriptions match
+# more broadly, so we need to be more selective to avoid flooding the scene)
+MAX_CANDIDATES_DESCRIPTION = 2
 
 
 @app.cls(gpu="A10G")
@@ -96,8 +99,10 @@ class DetectTools:
     #   4. Draw   → semi-transparent green fill + contour + "label CLIP_score%"
     #
     # Args:
-    #   tools     – list of strings, e.g. ["hammer", "pliers"]
-    #   img_bytes – raw image bytes (JPEG / PNG)
+    #   tools       – list of strings, e.g. ["hammer"]
+    #   img_bytes   – raw image bytes (JPEG / PNG)
+    #   description – optional Gemini description e.g. "steel claw hammer wooden handle"
+    #                 used as richer DINO query + CLIP scoring text instead of bare tool name
     #
     # Returns dict:
     #   image      – base64-encoded PNG with detections drawn
@@ -105,7 +110,7 @@ class DetectTools:
     #   count      – number of accepted detections
     # -----------------------------------------------------------------------
     @modal.method()
-    def detect(self, tools: list, img_bytes: bytes) -> dict:
+    def detect(self, tools: list, img_bytes: bytes, description: str = None) -> dict:
         import torch
         import numpy as np
         import cv2
@@ -115,10 +120,14 @@ class DetectTools:
         width, height = img.size
 
         # ── 1. Grounding DINO ───────────────────────────────────────────────
-        # text=[tools] wraps the label list in a batch-of-1 outer list, which
-        # is what the DINO processor expects for a single image.
+        # If Gemini gave us a richer description (e.g. "steel claw hammer wooden handle")
+        # use it as the DINO query — it gives the text encoder more visual context.
+        # Otherwise fall back to plain tool names.
+        dino_query       = description if description else " . ".join(tools)
+        dino_label_hint  = [description] if description else [tools]
+
         dino_input = self.gd_processor(
-            images=img, text=[tools], return_tensors="pt"
+            images=img, text=dino_query, return_tensors="pt"
         ).to(self.device)
 
         with torch.no_grad():
@@ -128,18 +137,23 @@ class DetectTools:
             dino_output,
             threshold=0.3,
             target_sizes=[(height, width)],
-            text_labels=[tools],
+            text_labels=dino_label_hint,
         )[0]
 
         boxes  = results["boxes"].cpu().numpy()
         scores = results["scores"].cpu().numpy()
-        labels = results["text_labels"]
 
-        # Drop any box whose decoded label is not in the requested tools list
-        valid  = [i for i, l in enumerate(labels) if l in tools]
-        boxes  = boxes[valid]
-        scores = scores[valid]
-        labels = [labels[i] for i in valid]
+        # When using a description DINO's decoded labels won't match tool names
+        # exactly, so we skip the strict filter and label all boxes with the
+        # original tool name for display.
+        if description:
+            labels = [tools[0]] * len(boxes)
+        else:
+            raw_labels = results["text_labels"]
+            valid  = [i for i, l in enumerate(raw_labels) if l in tools]
+            boxes  = boxes[valid]
+            scores = scores[valid]
+            labels = [raw_labels[i] for i in valid]
 
         if len(boxes) == 0:
             buf = io.BytesIO()
@@ -150,9 +164,12 @@ class DetectTools:
                 "count":      0,
             }
 
-        # Keep only the top-N by DINO score before running the heavier SAM
-        if len(boxes) > MAX_CANDIDATES:
-            top    = np.argsort(scores)[::-1][:MAX_CANDIDATES]
+        # Keep only the top-N by DINO score before running the heavier SAM.
+        # Description mode uses a tighter cap because broad descriptions can
+        # match many objects — we only want the single most-confident hit.
+        cap = MAX_CANDIDATES_DESCRIPTION if description else MAX_CANDIDATES
+        if len(boxes) > cap:
+            top    = np.argsort(scores)[::-1][:cap]
             boxes  = boxes[top]
             scores = scores[top]
             labels = [labels[i] for i in top]
@@ -204,11 +221,12 @@ class DetectTools:
             img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
 
             # Score each crop against its own label independently.
-            # Batching all labels as a single text-matrix would mix signals when
-            # multiple different tools are requested at once.
+            # If a Gemini description is available use it — richer text gives
+            # CLIP more visual signal than a bare tool name like "hammer".
             clip_scores = []
             for i, label in enumerate(labels):
-                tok       = self.clip_tokenizer([label]).to(self.device)
+                clip_text = description if description else label
+                tok       = self.clip_tokenizer([clip_text]).to(self.device)
                 txt_feat  = self.clip_model.encode_text(tok)
                 txt_feat  = txt_feat / txt_feat.norm(dim=-1, keepdim=True)
                 clip_scores.append((img_feats[i : i + 1] @ txt_feat.T).item())
