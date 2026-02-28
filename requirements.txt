@@ -4,5 +4,7 @@ torchvision
 Pillow
 numpy
 transformers
-opencv-python-headless
+opencv-python
 open-clip-torch
+openai-whisper
+sounddevice
