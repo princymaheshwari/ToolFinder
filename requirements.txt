@@ -8,3 +8,6 @@ opencv-python
 open-clip-torch
 openai-whisper
 sounddevice
+google-generativeai
+python-dotenv
+torchaudio

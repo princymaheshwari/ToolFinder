@@ -1,5 +1,6 @@
 import io
 import base64
+import os
 import socket
 import struct
 import numpy as np
@@ -8,7 +9,12 @@ import whisper
 import torch
 import cv2
 import modal
+import google.generativeai as genai
 from PIL import Image
+from dotenv import load_dotenv
+
+load_dotenv()
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
 # ---------------------------------------------------------------------------
 # CONFIG — edit these to match your setup
@@ -135,6 +141,56 @@ def extract_tool(text: str):
 
 
 # ---------------------------------------------------------------------------
+# 5. Gemini — get short visual description of the tool for richer DINO/CLIP
+#    Results are cached so Gemini is only called once per unique tool name.
+# ---------------------------------------------------------------------------
+
+_description_cache: dict = {}
+_gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+
+# Hardcoded fallbacks used when Gemini API is unavailable.
+# Richer than bare tool names so DINO/CLIP still get useful visual context.
+_TOOL_FALLBACKS = {
+    "hammer":       "steel claw hammer",
+    "wrench":       "adjustable metal wrench",
+    "pliers":       "metal slip joint pliers",
+    "screwdriver":  "flathead metal screwdriver",
+    "drill":        "handheld power drill",
+    "saw":          "serrated metal hand saw",
+    "chisel":       "wooden handle steel chisel",
+    "clamp":        "c-clamp metal vise",
+    "tape measure": "yellow retractable tape measure",
+    "level":        "long flat spirit level",
+}
+
+def get_tool_description(tool: str) -> str:
+    """
+    Calls Gemini once per tool name and caches the result.
+    Returns a 3-4 word visual description, e.g. "steel claw hammer".
+    Falls back to hardcoded description (then bare tool name) if the API call fails.
+    """
+    if tool in _description_cache:
+        return _description_cache[tool]
+
+    prompt = (
+        f"Describe a '{tool}' workshop hand tool in 3-4 words focusing on appearance only. "
+        "Reply with ONLY those words, no punctuation. "
+        "Example: for 'hammer' reply with 'steel claw hammer'"
+    )
+
+    try:
+        response = _gemini_model.generate_content(prompt)
+        description = response.text.strip().lower()
+        print(f"[gemini]    {tool} → \"{description}\"")
+    except Exception as e:
+        description = _TOOL_FALLBACKS.get(tool, tool)
+        print(f"[gemini]    API error, using fallback → \"{description}\"")
+
+    _description_cache[tool] = description
+    return description
+
+
+# ---------------------------------------------------------------------------
 # 5. Grab a single frame from the Raspberry Pi TCP stream
 #    Falls back to local webcam if the Pi is not reachable.
 # ---------------------------------------------------------------------------
@@ -179,9 +235,9 @@ def _recvall(sock, n: int) -> bytes:
 # 6. Run Modal detection
 # ---------------------------------------------------------------------------
 
-def run_detection(tool: str, img_bytes: bytes) -> dict:
+def run_detection(tool: str, img_bytes: bytes, description: str = None) -> dict:
     model = modal.Cls.from_name("detect-tools-clip", "DetectTools")()
-    return model.detect.remote([tool], img_bytes)
+    return model.detect.remote([tool], img_bytes, description)
 
 
 # ---------------------------------------------------------------------------
@@ -231,11 +287,13 @@ def main():
                 continue
 
             print(f"[tool]      {tool}")
+            description = get_tool_description(tool)  # cached after first call
+
             print("[camera]    Grabbing frame...")
             img_bytes = grab_frame()
 
             print("[modal]     Running detection...")
-            result = run_detection(tool, img_bytes)
+            result = run_detection(tool, img_bytes, description)
 
             count = result.get("count", 0)
             print(f"[result]    {count} detection(s)")
