@@ -169,7 +169,8 @@ Brush           → brush, brushes
 Slider          → slider, slide component
 Tape            → tape, tape holder, red tape, masking tape, tape roll
 Motor Controllers → motor controller, ESC, speed controller,
-                    red plastic bag/package (motor controllers ship in them)
+                    pink or red plastic bag/wrapper/package/pouch
+                    (motor controllers are shipped inside these)
 ──────────────────────────────────────────────────────────────────────────────
 
 DISAMBIGUATION RULES (read carefully):
@@ -181,20 +182,23 @@ DISAMBIGUATION RULES (read carefully):
      screwdriver you're holding").
 2. Motor vs Motor Controllers:
    - "motor", "DC motor", "spinning part" → Motor
-   - "motor controller", "ESC", "red bag/package" → Motor Controllers
+   - "motor controller", "ESC", "pink/red bag/package/wrapper" → Motor Controllers
 3. Drill Bits vs drill:
    - "drill bits", "bits", "bits for drilling" → Drill Bits
-   - "drill", "drilling machine" alone → NOT in vocabulary → output: Not found
+   - "drill", "drilling machine" alone → NOT in YOLO vocabulary → output: Drill
 4. Clutter: the user will never say "clutter" directly. Map any cleanup/removal
    intent (trash, unnecessary items, clean workspace) to Clutter.
 5. If the user mentions a REAL workshop tool (wrench, pliers, hammer, soldering
    iron, oscilloscope, multimeter, etc.) that is NOT in the class list above,
-   output exactly: Not found
+   output the exact tool name extracted from their speech with the first letter
+   capitalized (e.g. "Hammer", "Wrench", "Pen", "Drill").
 6. If the text is random noise, greetings, or completely unrelated, output nothing.
 
 OUTPUT RULES:
-- One YOLO class name per line, exactly as written above (case-sensitive).
-- For real workshop tools with no matching YOLO class: output exactly: Not found
+- One item per line.
+- If the tool matches a YOLO class: output the exact YOLO class name (case-sensitive).
+- If the tool is real but NOT in the YOLO class list: output the tool name with
+  first letter capitalized (e.g. Hammer, Wrench, Pliers, Drill).
 - No explanations, no extra text, no blank lines, no bullet points.
 - Multiple items = multiple lines.
 
@@ -210,25 +214,27 @@ EXAMPLES:
   "where is the ESP32"                       → ESP32
   "find the motor"                           → Motor
   "where are my drill bits"                  → Drill Bits
+  "where is my drill"                        → Drill
   "I need to clean up, what's not needed"    → Clutter
   "find the brush"                           → Brush
   "where is the slider"                      → Slider
   "I need some tape"                         → Tape
   "where are the motor controllers"          → Motor Controllers
   "where is my red package"                  → Motor Controllers
-  "find my hammer"                           → Not found
-  "where is the wrench and camera"           → Not found
-                                                (each on its own line — wrench has no class, camera does)
-  output for above:
-    Not found
+  "find my hammer"                           → Hammer
+  "where is my wrench"                       → Wrench
+  "where is the wrench and camera":
+    Wrench
     Camera
+  "find my pen"                              → Pen
 """
 
 
 def map_to_yolo_classes(transcript: str) -> list:
     """
-    Sends the transcript to Gemini. Returns a list of YOLO class names
-    (and/or "Not found" entries) extracted from the user's speech.
+    Sends the transcript to Gemini. Returns a list of items extracted from
+    the user's speech — either exact YOLO class names or capitalized tool
+    names for items outside the YOLO vocabulary.
     Returns an empty list if the speech contains nothing detectable.
     Falls back to an empty list on API error.
     """
@@ -339,36 +345,26 @@ def main():
             text = transcribe(whisper_model, audio_buf)
             print(f"[heard]     \"{text}\"")
 
-            yolo_classes = map_to_yolo_classes(text)
+            detected = map_to_yolo_classes(text)
 
-            if not yolo_classes:
+            if not detected:
                 print("[skip]      Nothing detectable found in transcript.\n")
                 continue
 
-            found     = [c for c in yolo_classes if c != "Not found"]
-            not_found = len(yolo_classes) - len(found)
-
-            if not_found:
-                print(f"[skip]      {not_found} item(s) not in YOLO vocabulary")
-
-            if not found:
-                print()
-                continue
-
-            print(f"[yolo]      {', '.join(found)}")
+            print(f"[yolo]      {', '.join(detected)}")
 
             print("[camera]    Grabbing frame...")
             img_bytes = grab_frame()
 
             print("[modal]     Running detection...")
-            result = run_detection(found, img_bytes)
+            result = run_detection(detected, img_bytes)
 
             count = result.get("count", 0)
             print(f"[result]    {count} detection(s)")
             for d in result.get("detections", []):
                 print(f"            {d['label']}  {d['score']:.0%}")
 
-            show_result(result, ', '.join(found))
+            show_result(result, ', '.join(detected))
             print()
 
 
