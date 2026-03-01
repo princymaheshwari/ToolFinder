@@ -1,7 +1,4 @@
 // ── Header Component ──────────────────────────────────────────────────────────
-
-import { togglePointer, getPointerState } from '../api/pointer.js';
-
 /**
  * Renders the top header bar and mounts pointer toggle logic.
  * @param {HTMLElement} root — element to append the header into
@@ -33,24 +30,6 @@ export function mountHeader(root) {
   `;
 
   root.appendChild(header);
-
-  // ── Pointer button logic ──────────────────────────────────────────────────
-  const btn = header.querySelector('#pointer-btn');
-
-  btn.addEventListener('click', () => {
-    const active = togglePointer();
-    updatePointerBtn(btn, active);
-  });
-}
-
-function updatePointerBtn(btn, active) {
-  if (active) {
-    btn.textContent  = 'POINTER ON';
-    btn.className    = 'text-xs px-3 py-1.5 border rounded-sm tracking-widest transition-colors duration-200 border-emerald-400 text-emerald-400';
-  } else {
-    btn.textContent  = 'POINTER OFF';
-    btn.className    = 'text-xs px-3 py-1.5 border rounded-sm tracking-widest transition-colors duration-200 border-neutral-700 text-neutral-400 hover:border-neutral-500';
-  }
 }
 
 /**
