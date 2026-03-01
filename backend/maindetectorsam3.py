@@ -92,6 +92,8 @@ class DetectTools:
                 cv2.drawContours(canvas, contours, -1, (0, 255, 0), 2)
 
                 ys, xs = np.where(mask)
+                cx = int(xs.mean()) if len(xs) > 0 else 0
+                cy = int(ys.mean()) if len(ys) > 0 else 0
                 tx = int(xs.min()) if len(xs) > 0 else 10
                 ty = max(12, int(ys.min()) - 8) if len(ys) > 0 else 10
                 cv2.putText(
@@ -99,7 +101,7 @@ class DetectTools:
                     (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2
                 )
 
-                detections.append({"label": tool_name, "score": score})
+                detections.append({"label": tool_name, "score": score, "cx": cx, "cy": cy})
 
         if not detections:
             buf = io.BytesIO()
