@@ -1,8 +1,10 @@
 import io
 import base64
 import os
+import sys
 import socket
 import struct
+from pathlib import Path
 import numpy as np
 import sounddevice as sd
 import whisper
@@ -36,9 +38,9 @@ MAX_SPEECH_SEC    = 8      # hard cap — cuts runaway recordings
 PI_HOST = "192.168.50.232"
 PI_PORT = 9999
 
-# Set to a local image path to test without Pi/webcam (e.g. "test.jpg")
-# Set to None to use live camera
-TEST_IMAGE_PATH = "test.jpg"
+# Image path: pass as first CLI arg (e.g. python voice_agent.py test.jpg)
+# Set to None to use live Pi/webcam feed instead
+TEST_IMAGE_PATH = sys.argv[1] if len(sys.argv) > 1 else None
 
 WHISPER_MODEL = "base"     # tiny / base / small — trade speed for accuracy
 
@@ -131,118 +133,91 @@ def transcribe(whisper_model, audio_buf: np.ndarray) -> str:
 
 def extract_tool(text: str):
     """
-    Returns the first TOOLS entry found in the transcript, or None.
-    e.g. "where is my wrench" → "wrench"
+    Returns a list of all TOOLS entries found in the transcript, or None.
+    e.g. "where is my wrench and hammer" → ["wrench", "hammer"]
     """
-    for tool in TOOLS:
-        if tool in text:
-            return tool
-    return None
+    found = [tool for tool in TOOLS if tool in text]
+    return found if found else None
 
 
 # ---------------------------------------------------------------------------
-# 5. Gemini — get short visual description of the tool for richer DINO/CLIP
-#    Results are cached so Gemini is only called once per unique tool name.
+# 5. Gemini — parse the user's speech to extract tool queries
+#    Gemini acts as a natural language parser ONLY: it extracts exactly
+#    what the user said about each tool (e.g. "red pliers", "hammer").
+#    It NEVER invents descriptions not spoken by the user.
 # ---------------------------------------------------------------------------
 
-_description_cache: dict = {}
 _gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
-# Hardcoded fallbacks used when Gemini API is unavailable.
-# Each description is deliberately shape/color-specific so DINO can distinguish
-# the target tool from other objects that share its material (metal, plastic, etc).
-_TOOL_FALLBACKS = {
-    "hammer":       "claw hammer with flat head",
-    "wrench":       "adjustable open jaw wrench",
-    "pliers":       "hinged pivot jaw pliers",
-    "screwdriver":  "long thin shaft screwdriver",
-    "drill":        "trigger grip power drill chuck",
-    "saw":          "long blade with jagged teeth",
-    "chisel":       "flat beveled blade chisel",
-    "clamp":        "c-shaped screw frame clamp",
-    "tape measure": "yellow compact retractable tape",
-    "level":        "long flat bar with bubble vial",
-}
+_PARSE_PROMPT = """\
+You are a speech parser for a workshop tool finder.
 
-_GEMINI_SYSTEM_PROMPT = """\
-You generate short visual descriptions for an AI object detector (DINO + CLIP).
-The detector will search for the described object inside a photo of a cluttered workshop.
+The user spoke this sentence: "{transcript}"
+The following tools were detected in the sentence: {tools}
 
-YOUR GOAL: produce a 2-4 word phrase that uniquely identifies the tool so the detector
-picks the RIGHT object and ignores everything else on the workbench.
+Your job: for each detected tool, extract ONLY the words the user actually used to
+describe that tool — specifically any color, size, or appearance words spoken right
+before or after the tool name.
 
-STRICT RULES — follow all of them:
-1. NEVER use the words: metal, metallic, steel, iron, tool, workshop, hand, common, typical,
-   large, small, object, item, device. These words apply to almost everything in a workshop
-   and will cause the detector to highlight the wrong objects.
-2. Focus ONLY on features that make this tool visually DISTINCT from other workshop objects:
-   - Unique SHAPE or silhouette (e.g. claw on a hammer, pivot hinge on pliers, chuck on drill)
-   - Distinctive COLOR if the tool has one (yellow tape, orange handle, red grip)
-   - A unique structural part no other tool shares (trigger on a drill, bubble vial on a level)
-3. If the user's sentence mentions a color or size modifier (e.g. "red hammer", "small pliers",
-   "blue screwdriver"), you MUST include that color/size in the output — it is the most
-   important distinguishing feature.
-4. If no color or modifier is mentioned, do NOT invent one unless the tool almost always
-   appears in a specific color (e.g. tape measures are almost always yellow/orange).
-5. Output 2-4 words ONLY. No punctuation. No explanation. No extra words.
-
-SHAPE REFERENCE (use these unique features, not generic ones):
-- hammer      → claw at back + flat striking face  (NOT "metal hammer")
-- pliers      → pivot hinge + two spreading handles + gripping jaw  (NOT "serrated metal jaws")
-- wrench      → adjustable C-shaped jaw opening  (NOT "metal wrench")
-- screwdriver → long thin narrow shaft + bulky handle  (NOT "metal screwdriver")
-- drill       → cylindrical body + front chuck + trigger  (NOT "power tool")
-- saw         → long flat blade + jagged teeth along one edge  (NOT "serrated tool")
-- chisel      → short flat angled blade + thick striking handle
-- clamp       → C or F shaped frame + threaded screw mechanism
-- tape measure→ compact square case + yellow retractable ribbon
-- level       → long flat rectangular bar + small bubble vial window
+STRICT RULES:
+1. ONLY use words the user actually said. NEVER invent or add any description.
+2. If the user gave a descriptor (color, size, adjective) for a tool, include it.
+3. If the user gave NO descriptor for a tool, output just the bare tool name.
+4. Output exactly one line per tool in the format:  tool_name|query
+   where query is either "tool_name" or "descriptor tool_name".
+5. No extra text, no explanations, no blank lines.
 
 EXAMPLES:
-  tool="hammer",       user said="where is my hammer"           → claw hammer flat head
-  tool="hammer",       user said="where is my red hammer"       → red claw hammer
-  tool="pliers",       user said="find the pliers"              → pivot hinge jaw pliers
-  tool="pliers",       user said="where are my short pliers"    → short pivot pliers
-  tool="drill",        user said="where is the drill"           → cylindrical drill with chuck
-  tool="tape measure", user said="find the tape"                → yellow compact tape dispenser
-  tool="screwdriver",  user said="blue screwdriver please"      → blue thin shaft screwdriver
-  tool="level",        user said="where is my level"            → flat bar bubble vial level
+  transcript="where is my red pliers and hammer"  tools=["pliers","hammer"]
+    pliers|red pliers
+    hammer|hammer
+
+  transcript="find the green screwdriver and the big wrench"  tools=["screwdriver","wrench"]
+    screwdriver|green screwdriver
+    wrench|big wrench
+
+  transcript="where is my drill"  tools=["drill"]
+    drill|drill
+
+  transcript="locate the small blue hammer and short pliers"  tools=["hammer","pliers"]
+    hammer|small blue hammer
+    pliers|short pliers
 """
 
-def get_tool_description(tool: str, transcript: str = "") -> str:
+def parse_user_descriptions(transcript: str, tools: list) -> dict:
     """
-    Calls Gemini once per (tool, transcript) and caches by tool name.
-    Passes the full transcript so Gemini can extract color/size modifiers.
-    Falls back to hardcoded shape-specific descriptions if the API call fails.
+    Sends the transcript + detected tool names to Gemini.
+    Gemini extracts ONLY what the user said about each tool.
+    Returns dict mapping tool_name → query string.
+    Falls back to bare tool names if Gemini fails.
     """
-    # If transcript has new color/size context, bypass cache to get a fresh description.
-    # Otherwise use the cached value so we don't burn API quota on repeated calls.
-    color_words = {"red","blue","green","yellow","orange","black","white","gray","grey",
-                   "big","small","large","short","long","tiny","thick","thin"}
-    has_modifier = any(w in transcript.split() for w in color_words)
+    fallback = {t: t for t in tools}
 
-    if not has_modifier and tool in _description_cache:
-        return _description_cache[tool]
-
-    user_context = f'The user said: "{transcript}"' if transcript else ""
-    prompt = (
-        f"{_GEMINI_SYSTEM_PROMPT}\n\n"
-        f"Now generate a description for:\n"
-        f"  tool = \"{tool}\"\n"
-        f"  {user_context}\n"
-        f"Output only the 2-4 word description:"
+    prompt = _PARSE_PROMPT.format(
+        transcript=transcript,
+        tools=tools,
     )
 
     try:
         response = _gemini_model.generate_content(prompt)
-        description = response.text.strip().lower()
-        print(f"[gemini]    {tool} → \"{description}\"")
+        lines = response.text.strip().lower().splitlines()
+        result = {}
+        for line in lines:
+            if "|" in line:
+                tool_name, query = line.split("|", 1)
+                tool_name = tool_name.strip()
+                query = query.strip()
+                if tool_name in tools:
+                    result[tool_name] = query
+                    print(f"[gemini]    {tool_name} → \"{query}\"")
+        # Fill in any tools Gemini missed
+        for t in tools:
+            if t not in result:
+                result[t] = t
+        return result
     except Exception as e:
-        description = _TOOL_FALLBACKS.get(tool, tool)
-        print(f"[gemini]    API error, using fallback → \"{description}\"")
-
-    _description_cache[tool] = description
-    return description
+        print(f"[gemini]    API error ({e}), using bare tool names")
+        return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -290,9 +265,13 @@ def _recvall(sock, n: int) -> bytes:
 # 6. Run Modal detection
 # ---------------------------------------------------------------------------
 
-def run_detection(tool: str, img_bytes: bytes, description: str = None) -> dict:
-    model = modal.Cls.from_name("detect-tools-clip", "DetectTools")()
-    return model.detect.remote([tool], img_bytes, description)
+def run_detection(tools: list, img_bytes: bytes, transcript: str = "") -> dict:
+    # Gemini parses the transcript and returns only what the user said per tool.
+    # e.g. "red pliers" or just "hammer" if no descriptor was spoken.
+    queries = parse_user_descriptions(transcript, tools)
+    descriptions = [queries.get(t, t) for t in tools]
+    model = modal.Cls.from_name("detect-tools-sam3", "DetectTools")()
+    return model.detect.remote(tools, img_bytes, descriptions)
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +287,11 @@ def show_result(result: dict, tool: str):
     pil_img   = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     frame     = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
-    cv2.imwrite("result.png", frame)
-    print(f"  Saved → result.png")
+    img_stem   = Path(TEST_IMAGE_PATH).stem if TEST_IMAGE_PATH else "frame"
+    tool_slug  = tool.replace(" ", "_").replace(",", "")
+    out_name   = f"result_{img_stem}_{tool_slug}.png"
+    cv2.imwrite(out_name, frame)
+    print(f"  Saved → {out_name}")
     cv2.imshow(f"Found: {tool}", frame)
     cv2.waitKey(DISPLAY_MS)
     cv2.destroyAllWindows()
@@ -336,26 +318,25 @@ def main():
             text = transcribe(whisper_model, audio_buf)
             print(f"[heard]     \"{text}\"")
 
-            tool = extract_tool(text)
-            if tool is None:
+            tools = extract_tool(text)
+            if tools is None:
                 print("[skip]      No known tool found in transcript.\n")
                 continue
 
-            print(f"[tool]      {tool}")
-            description = get_tool_description(tool, transcript=text)
+            print(f"[tool]      {', '.join(tools)}")
 
             print("[camera]    Grabbing frame...")
             img_bytes = grab_frame()
 
             print("[modal]     Running detection...")
-            result = run_detection(tool, img_bytes, description)
+            result = run_detection(tools, img_bytes, transcript=text)
 
             count = result.get("count", 0)
             print(f"[result]    {count} detection(s)")
             for d in result.get("detections", []):
-                print(f"            {d['label']}  CLIP {d['clip_score']:.0%}  DINO {d['dino_score']:.0%}")
+                print(f"            {d['label']}  {d['score']:.0%}")
 
-            show_result(result, tool)
+            show_result(result, ', '.join(tools))
             print()
 
 
