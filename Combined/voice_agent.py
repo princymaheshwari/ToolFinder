@@ -239,14 +239,25 @@ def run(transcript: str, image_path: str = None):
 
     show_result(composite, prompts)
 
+    position = {}
     if len(prompts) == 1 and results[prompts[0]].get("count") == 1:
         r = results[prompts[0]]
+        position = {"cx": r["cx"], "cy": r["cy"]}
         print(f"[position] ({r['cx']}, {r['cy']})")
 
-    # Return PNG bytes so callers (e.g. the API server) can send the image back
+    # Encode as JPEG for fast transport back to the frontend
     buf = io.BytesIO()
-    Image.fromarray(composite).save(buf, format="PNG")
-    return buf.getvalue()
+    Image.fromarray(composite).save(buf, format="JPEG", quality=90)
+
+    return {
+        "image": base64.b64encode(buf.getvalue()).decode(),
+        "count": len(all_detections),
+        "detections": [
+            {"label": d["label"], "score": round(d["score"], 2)}
+            for d in all_detections
+        ],
+        **position,
+    }
 
 
 if __name__ == "__main__":
