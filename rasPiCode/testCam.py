@@ -4,25 +4,25 @@ import cv2
 cap = cv2.VideoCapture(4)
 
 if not cap.isOpened():
-    print("Error: Could not open video stream.")
-    exit()
+  print("Error: Could not open video stream.")
+  exit()
 
 print("Press 'q' to quit the live feed.")
 
 while True:
-    # Capture frame-by-frame
-    ret, frame = cap.read()
+  # Capture frame-by-frame
+  ret, frame = cap.read()
 
-    if not ret:
-        print("Error: Failed to grab frame.")
-        break
+  if not ret:
+    print("Error: Failed to grab frame.")
+    break
 
-    # Display the resulting frame
-    cv2.imshow('Live Camera Feed', frame)
+  # Display the resulting frame
+  cv2.imshow('Live Camera Feed', frame)
 
-    # Break the loop when 'q' is pressed
-    if cv2.waitKey(1) == ord('q'):
-        break
+  # Break the loop when 'q' is pressed
+  if cv2.waitKey(1) == ord('q'):
+    break
 
 # Release the capture object and close windows
 cap.release()
