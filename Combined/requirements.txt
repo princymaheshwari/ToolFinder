@@ -8,6 +8,9 @@ opencv-python
 open-clip-torch
 openai-whisper
 sounddevice
-google-generativeai
+google-genai
 python-dotenv
 torchaudio
+fastapi
+uvicorn[standard]
+python-multipart
