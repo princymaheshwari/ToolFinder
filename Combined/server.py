@@ -13,11 +13,11 @@ app = FastAPI()
 # Allow requests from any origin (frontend is on a different machine)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=[""],
+    allow_credentials=False,  # must be False when using ""
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
-
 
 # ---------------------------------------------------------------------------
 # WebSocket manager — pushes detection results to all connected frontends

@@ -61,10 +61,9 @@ YOLO CLASS NAMES (output these exactly, character-for-character):
 Allen key        -> hex key, L-shaped key, Allen wrench, hex wrench
 Camera           -> camera, cameras
 Pins             -> pin, pins, connector pins, header pins, jumper pins
-Screwdriver Kit  -> DEFAULT for any screwdriver mention ("I need a screwdriver",
-                   "green case", "screwdriver box", "where do I put it back")
-Screwdriver      -> ONLY the bare hand tool clearly already in use
-                   ("hand me that flathead", "pass me the Phillips")
+Screwdriver Kit  -> screwdriver case, screwdiver box
+Screwdriver      -> mention of screwdriver ONLY, the bare hand tool clearly already in use
+                   ("hand me that flathead", "pass me the Phillips", "where's my screwdriver")
 ESP32            -> ESP32 board, microcontroller board
 Motor            -> motor, DC motor, servo motor (NOT motor controller)
 Drill Bits       -> drill bit, drill bits, bits for a drill
