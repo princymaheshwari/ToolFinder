@@ -138,7 +138,7 @@ class YoloSam2Detector:
             tx, ty = (int(xs.min()), int(ys.min()) - 12) if len(xs) > 0 else (10, 10)
             cv2.putText(
                 canvas, f"{labels[i]} {scores_arr[i]:.0%}",
-                (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 1.8, draw_bgr, 3
+                (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 1.2, draw_bgr, 3
             )
             detections.append({"label": labels[i], "score": float(scores_arr[i]), "cx": cx, "cy": cy})
 
@@ -248,7 +248,7 @@ class Sam3Detector:
             tx, ty = (int(xs.min()), int(ys.min()) - 12) if len(xs) > 0 else (10, 10)
             cv2.putText(
                 canvas, f"{text} {det['score']:.0%}",
-                (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 1.8, draw_bgr, 3
+                (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 1.2, draw_bgr, 3
             )
 
         buf = io.BytesIO()
