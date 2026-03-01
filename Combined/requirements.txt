@@ -8,6 +8,10 @@ opencv-python
 open-clip-torch
 openai-whisper
 sounddevice
-google-generativeai
+groq
+websocket-client
 python-dotenv
 torchaudio
+fastapi
+uvicorn[standard]
+python-multipart

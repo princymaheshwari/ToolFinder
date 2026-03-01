@@ -1,10 +1,8 @@
 // ── Speech Component ──────────────────────────────────────────────────────────
-// Fixed-height card. Live area shows interim/final text, with a rotating hint
-// when idle. Hint rotates every 5s but pauses for 20s after the user speaks.
-
 import { sendTranscript } from '../api/detection.js';
-import { performSwap }   from './swap.js';
+import { performSwap }    from './swap.js';
 import { setHeaderStatus } from './header.js';
+import { showResult }      from './results.js';
 
 const HINTS = [
   '"where is my hammer"',
@@ -34,7 +32,7 @@ export function mountSpeech(root) {
         <span id="speech-status" class="text-[10px] tracking-widest text-neutral-500">● IDLE</span>
       </div>
 
-      <!-- Live area — hint when idle, transcript when speaking -->
+      <!-- Live area -->
       <div class="flex-shrink-0 px-4 py-4 border-b border-neutral-800">
         <p id="transcript-display"
           class="text-sm h-[44px] overflow-hidden leading-5 text-neutral-600 tracking-wide italic transition-all duration-300">
@@ -42,7 +40,7 @@ export function mountSpeech(root) {
         </p>
       </div>
 
-      <!-- Send status — always-visible slot -->
+      <!-- Send status -->
       <div class="flex-shrink-0 px-4 py-2 border-b border-neutral-800">
         <div id="send-status-bar" class="px-3 py-1.5 rounded-sm border border-neutral-800 bg-neutral-800/40 text-[10px] tracking-widest flex items-center justify-between">
           <span id="send-status-text" class="text-neutral-600">READY</span>
@@ -50,7 +48,7 @@ export function mountSpeech(root) {
         </div>
       </div>
 
-      <!-- Query log — scrollable, fills remaining space -->
+      <!-- Query log -->
       <div class="flex flex-col min-h-0 flex-1">
         <div class="flex-shrink-0 flex items-center justify-between px-4 py-1.5 border-b border-neutral-800">
           <span class="text-[10px] text-neutral-600 tracking-widest">QUERY LOG</span>
@@ -61,7 +59,7 @@ export function mountSpeech(root) {
         </ul>
       </div>
 
-      <!-- Controls — fixed -->
+      <!-- Controls -->
       <div class="flex-shrink-0 px-4 py-3 border-t border-neutral-800 flex items-center gap-3">
         <button id="speech-toggle"
           class="text-xs px-3 py-1.5 border border-neutral-700 rounded-sm text-neutral-400 hover:border-emerald-400 hover:text-emerald-400 tracking-widest transition-colors duration-200">
@@ -81,15 +79,9 @@ export function mountSpeech(root) {
     return;
   }
 
-  // Shared state for hint rotation
-  const state = {
-    lastSpeechAt: 0,   // timestamp of last speech activity
-    hintIndex: 0,
-    isListening: false,
-  };
+  const state = { lastSpeechAt: 0, hintIndex: 0, isListening: false };
 
   startHintRotation(section, state);
-
   const recognition = buildRecognition(SpeechRecognition, section, state);
   wireToggle(section, recognition, state);
   wireClearLog(section);
@@ -99,9 +91,7 @@ export function mountSpeech(root) {
 
 function startHintRotation(section, state) {
   const display = section.querySelector('#transcript-display');
-
   setInterval(() => {
-    // Only rotate if user hasn't spoken recently and mic isn't active
     const silentLongEnough = (Date.now() - state.lastSpeechAt) >= SPEECH_SILENCE_MS;
     if (!state.isListening && silentLongEnough) {
       state.hintIndex = (state.hintIndex + 1) % HINTS.length;
@@ -144,13 +134,12 @@ function buildRecognition(SpeechRecognition, section, state) {
     setHeaderStatus('connected');
     toggleBtn.textContent = 'START LISTENING';
     toggleBtn.className   = 'text-xs px-3 py-1.5 border border-neutral-700 rounded-sm text-neutral-400 hover:border-emerald-400 hover:text-emerald-400 tracking-widest transition-colors duration-200';
-    // Show current hint immediately on stop
     display.textContent = HINTS[state.hintIndex];
     display.className   = 'text-sm h-[44px] overflow-hidden leading-5 text-neutral-600 tracking-wide italic';
   };
 
   recognition.onresult = (event) => {
-    state.lastSpeechAt = Date.now(); // reset silence timer on any speech
+    state.lastSpeechAt = Date.now();
     let interim = '';
     let final   = '';
 
@@ -161,8 +150,8 @@ function buildRecognition(SpeechRecognition, section, state) {
     }
 
     if (interim) {
-      display.textContent = interim;
-      display.className   = 'text-sm h-[44px] overflow-hidden leading-5 text-neutral-500 tracking-wide italic';
+      display.textContent   = interim;
+      display.className     = 'text-sm h-[44px] overflow-hidden leading-5 text-neutral-500 tracking-wide italic';
       display.style.opacity = '1';
     }
 
@@ -171,7 +160,6 @@ function buildRecognition(SpeechRecognition, section, state) {
       display.textContent = `"${text}"`;
       display.className   = 'text-sm h-[44px] overflow-hidden leading-5 text-neutral-200 tracking-wide';
 
-      // Voice command: "swap" triggers layout swap, does not send to backend
       if (/\bswap\b/.test(text)) {
         performSwap();
         setStatus(statusEl, 'listening');
@@ -219,6 +207,7 @@ async function dispatchToBackend(transcript, section, state, statusEl) {
     console.log(`[speech] → "${transcript}"`);
     const result = await sendTranscript(transcript);
     console.log('[speech] ✓', result);
+    showResult(result);
     setSendBar(section, 'sent');
     setStatus(statusEl, 'listening');
     setHeaderStatus('connected');
