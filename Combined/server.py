@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -69,17 +69,18 @@ class DetectRequest(BaseModel):
 
 
 @app.post("/detect")
-async def detect(req: DetectRequest):
+async def detect(req: DetectRequest, request: Request):
     """
     Receives a transcript from the frontend.
-    Backend grabs the camera frame itself (Pi stream or local webcam).
+    Backend grabs a camera frame from the client's spinCam.py WebSocket stream.
     Returns annotated image as base64 JPEG + detection metadata.
     Also pushes the same result to all connected WebSocket clients.
     """
-    print(f"[api]  POST /detect  transcript='{req.transcript}'")
+    client_ip = request.client.host
+    print(f"[api]  POST /detect  transcript='{req.transcript}'  client={client_ip}")
 
     # run() is blocking — offload to thread pool so the event loop stays free
-    result = await run_in_threadpool(run, req.transcript, None)
+    result = await run_in_threadpool(run, req.transcript, None, client_ip)
 
     if result is None:
         raise HTTPException(status_code=422, detail="Nothing detectable in transcript.")
