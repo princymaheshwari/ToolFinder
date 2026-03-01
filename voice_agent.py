@@ -22,9 +22,12 @@ genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 # CONFIG — edit these to match your setup
 # ---------------------------------------------------------------------------
 
-TOOLS = [
-    "hammer", "wrench", "pliers", "screwdriver", "drill",
-    "saw", "chisel", "clamp", "tape measure", "level",
+# Exact class names that the YOLO model was trained on.
+# Gemini maps all conversational speech to one of these.
+YOLO_CLASSES = [
+    "Allen key", "Sensor Case", "Camera", "Pins", "Screwdriver Kit",
+    "ESP32", "Screwdriver", "Motor", "Drill Bits", "Clutter",
+    "Brush", "Slider", "Tape", "Motor Controllers",
 ]
 
 SAMPLE_RATE      = 16000   # Whisper expects 16kHz
@@ -122,102 +125,123 @@ def transcribe(whisper_model, audio_buf: np.ndarray) -> str:
         audio_buf,
         fp16=False,
         language="en",                          # stops random-language hallucinations
-        initial_prompt="where is my hammer, where is my wrench, where is my drill, find the screwdriver, locate the pliers",
+        initial_prompt="where is the Allen key, find the sensor case, where is the camera, find my pins, screwdriver kit, ESP32, motor, drill bits, brush, tape, motor controllers, screwdriver",
     )
     return result["text"].strip().lower()
 
 
 # ---------------------------------------------------------------------------
-# 4. Extract tool name from transcript
-# ---------------------------------------------------------------------------
-
-def extract_tool(text: str):
-    """
-    Returns a list of all TOOLS entries found in the transcript, or None.
-    e.g. "where is my wrench and hammer" → ["wrench", "hammer"]
-    """
-    found = [tool for tool in TOOLS if tool in text]
-    return found if found else None
-
-
-# ---------------------------------------------------------------------------
-# 5. Gemini — parse the user's speech to extract tool queries
-#    Gemini acts as a natural language parser ONLY: it extracts exactly
-#    what the user said about each tool (e.g. "red pliers", "hammer").
-#    It NEVER invents descriptions not spoken by the user.
+# 4. Gemini — map conversational speech to exact YOLO class names
+#    Gemini is the ONLY stage that decides what to detect. It understands
+#    context (e.g. "screwdriver" vs "screwdriver kit"), synonyms, and
+#    natural phrasing. It outputs only class names the YOLO model knows.
 # ---------------------------------------------------------------------------
 
 _gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
-_PARSE_PROMPT = """\
-You are a speech parser for a workshop tool finder.
+_MAP_PROMPT = """\
+You are a semantic mapper for a YOLO workshop object detector.
 
-The user spoke this sentence: "{transcript}"
-The following tools were detected in the sentence: {tools}
+The user spoke this sentence (converted from speech to text): "{transcript}"
 
-Your job: for each detected tool, extract ONLY the words the user actually used to
-describe that tool — specifically any color, size, or appearance words spoken right
-before or after the tool name.
+Your task: identify every physical item the user is looking for, then map each one
+to the single matching YOLO class name from the list below. Output one class name
+per line — nothing else.
 
-STRICT RULES:
-1. ONLY use words the user actually said. NEVER invent or add any description.
-2. If the user gave a descriptor (color, size, adjective) for a tool, include it.
-3. If the user gave NO descriptor for a tool, output just the bare tool name.
-4. Output exactly one line per tool in the format:  tool_name|query
-   where query is either "tool_name" or "descriptor tool_name".
-5. No extra text, no explanations, no blank lines.
+─── VALID YOLO CLASS NAMES ───────────────────────────────────────────────────
+Allen key       → hex key, L-shaped key, Allen wrench, hex wrench, "the key"
+Sensor Case     → case/box for sensors, sensor storage, "put sensors back"
+Camera          → camera, cameras
+Pins            → pin, pins, connector pins, header pins, jumper pins
+Screwdriver Kit → DEFAULT for any screwdriver mention: "I need a screwdriver",
+                  "screwdriver box", "green case", "where do I put screwdrivers back",
+                  "find me a screwdriver" (user will get it from the kit)
+Screwdriver     → ONLY when context clearly means the bare hand tool in use:
+                  "pass me that screwdriver", "hand me the flathead",
+                  "the Phillips head I am already using"
+ESP32           → ESP32 board, esp32 device, microcontroller board
+Motor           → motor, DC motor, servo motor (NOT motor controller)
+Drill Bits      → drill bit, drill bits, bits for a drill
+                  NOTE: "drill" or "drilling machine" alone is NOT in vocabulary
+Clutter         → trash, junk, things to clean up, items to remove,
+                  "what's not needed", "clean my workspace", "locate the trash"
+Brush           → brush, brushes
+Slider          → slider, slide component
+Tape            → tape, tape holder, red tape, masking tape, tape roll
+Motor Controllers → motor controller, ESC, speed controller,
+                    red plastic bag/package (motor controllers ship in them)
+──────────────────────────────────────────────────────────────────────────────
+
+DISAMBIGUATION RULES (read carefully):
+1. Screwdriver vs Screwdriver Kit:
+   - DEFAULT: any mention of "screwdriver" maps to Screwdriver Kit — because in a
+     workshop, when someone says "I need a screwdriver" they go to the kit to get one.
+   - EXCEPTION: use Screwdriver ONLY if context clearly shows they mean the bare tool
+     already in hand or in immediate use (e.g. "hand me the flathead", "pass me that
+     screwdriver you're holding").
+2. Motor vs Motor Controllers:
+   - "motor", "DC motor", "spinning part" → Motor
+   - "motor controller", "ESC", "red bag/package" → Motor Controllers
+3. Drill Bits vs drill:
+   - "drill bits", "bits", "bits for drilling" → Drill Bits
+   - "drill", "drilling machine" alone → NOT in vocabulary → output: Not found
+4. Clutter: the user will never say "clutter" directly. Map any cleanup/removal
+   intent (trash, unnecessary items, clean workspace) to Clutter.
+5. If the user mentions a REAL workshop tool (wrench, pliers, hammer, soldering
+   iron, oscilloscope, multimeter, etc.) that is NOT in the class list above,
+   output exactly: Not found
+6. If the text is random noise, greetings, or completely unrelated, output nothing.
+
+OUTPUT RULES:
+- One YOLO class name per line, exactly as written above (case-sensitive).
+- For real workshop tools with no matching YOLO class: output exactly: Not found
+- No explanations, no extra text, no blank lines, no bullet points.
+- Multiple items = multiple lines.
 
 EXAMPLES:
-  transcript="where is my red pliers and hammer"  tools=["pliers","hammer"]
-    pliers|red pliers
-    hammer|hammer
-
-  transcript="find the green screwdriver and the big wrench"  tools=["screwdriver","wrench"]
-    screwdriver|green screwdriver
-    wrench|big wrench
-
-  transcript="where is my drill"  tools=["drill"]
-    drill|drill
-
-  transcript="locate the small blue hammer and short pliers"  tools=["hammer","pliers"]
-    hammer|small blue hammer
-    pliers|short pliers
+  "where is my Allen key"                    → Allen key
+  "I can't find the key"                     → Allen key
+  "where is the case for my sensors"         → Sensor Case
+  "find my cameras"                          → Camera
+  "I need some pins"                         → Pins
+  "where is the green case"                  → Screwdriver Kit
+  "pass me a screwdriver"                    → Screwdriver Kit
+  "hand me the flathead you're holding"      → Screwdriver
+  "where is the ESP32"                       → ESP32
+  "find the motor"                           → Motor
+  "where are my drill bits"                  → Drill Bits
+  "I need to clean up, what's not needed"    → Clutter
+  "find the brush"                           → Brush
+  "where is the slider"                      → Slider
+  "I need some tape"                         → Tape
+  "where are the motor controllers"          → Motor Controllers
+  "where is my red package"                  → Motor Controllers
+  "find my hammer"                           → Not found
+  "where is the wrench and camera"           → Not found
+                                                (each on its own line — wrench has no class, camera does)
+  output for above:
+    Not found
+    Camera
 """
 
-def parse_user_descriptions(transcript: str, tools: list) -> dict:
-    """
-    Sends the transcript + detected tool names to Gemini.
-    Gemini extracts ONLY what the user said about each tool.
-    Returns dict mapping tool_name → query string.
-    Falls back to bare tool names if Gemini fails.
-    """
-    fallback = {t: t for t in tools}
 
-    prompt = _PARSE_PROMPT.format(
-        transcript=transcript,
-        tools=tools,
-    )
-
+def map_to_yolo_classes(transcript: str) -> list:
+    """
+    Sends the transcript to Gemini. Returns a list of YOLO class names
+    (and/or "Not found" entries) extracted from the user's speech.
+    Returns an empty list if the speech contains nothing detectable.
+    Falls back to an empty list on API error.
+    """
+    prompt = _MAP_PROMPT.format(transcript=transcript)
     try:
         response = _gemini_model.generate_content(prompt)
-        lines = response.text.strip().lower().splitlines()
-        result = {}
-        for line in lines:
-            if "|" in line:
-                tool_name, query = line.split("|", 1)
-                tool_name = tool_name.strip()
-                query = query.strip()
-                if tool_name in tools:
-                    result[tool_name] = query
-                    print(f"[gemini]    {tool_name} → \"{query}\"")
-        # Fill in any tools Gemini missed
-        for t in tools:
-            if t not in result:
-                result[t] = t
-        return result
+        lines = [ln.strip() for ln in response.text.strip().splitlines() if ln.strip()]
+        for ln in lines:
+            print(f"[gemini]    → \"{ln}\"")
+        return lines
     except Exception as e:
-        print(f"[gemini]    API error ({e}), using bare tool names")
-        return fallback
+        print(f"[gemini]    API error ({e}), skipping detection")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -265,13 +289,10 @@ def _recvall(sock, n: int) -> bytes:
 # 6. Run Modal detection
 # ---------------------------------------------------------------------------
 
-def run_detection(tools: list, img_bytes: bytes, transcript: str = "") -> dict:
-    # Gemini parses the transcript and returns only what the user said per tool.
-    # e.g. "red pliers" or just "hammer" if no descriptor was spoken.
-    queries = parse_user_descriptions(transcript, tools)
-    descriptions = [queries.get(t, t) for t in tools]
+def run_detection(yolo_classes: list, img_bytes: bytes) -> dict:
+    # YOLO class names are already the right queries — pass them directly.
     model = modal.Cls.from_name("detect-tools-sam3", "DetectTools")()
-    return model.detect.remote(tools, img_bytes, descriptions)
+    return model.detect.remote(yolo_classes, img_bytes, yolo_classes)
 
 
 # ---------------------------------------------------------------------------
@@ -318,25 +339,36 @@ def main():
             text = transcribe(whisper_model, audio_buf)
             print(f"[heard]     \"{text}\"")
 
-            tools = extract_tool(text)
-            if tools is None:
-                print("[skip]      No known tool found in transcript.\n")
+            yolo_classes = map_to_yolo_classes(text)
+
+            if not yolo_classes:
+                print("[skip]      Nothing detectable found in transcript.\n")
                 continue
 
-            print(f"[tool]      {', '.join(tools)}")
+            found     = [c for c in yolo_classes if c != "Not found"]
+            not_found = len(yolo_classes) - len(found)
+
+            if not_found:
+                print(f"[skip]      {not_found} item(s) not in YOLO vocabulary")
+
+            if not found:
+                print()
+                continue
+
+            print(f"[yolo]      {', '.join(found)}")
 
             print("[camera]    Grabbing frame...")
             img_bytes = grab_frame()
 
             print("[modal]     Running detection...")
-            result = run_detection(tools, img_bytes, transcript=text)
+            result = run_detection(found, img_bytes)
 
             count = result.get("count", 0)
             print(f"[result]    {count} detection(s)")
             for d in result.get("detections", []):
                 print(f"            {d['label']}  {d['score']:.0%}")
 
-            show_result(result, ', '.join(tools))
+            show_result(result, ', '.join(found))
             print()
 
 
