@@ -3,7 +3,7 @@
 // Set VITE_BACKEND_HOST in your .env to the IP of the machine running server.py.
 
 const BACKEND_HOST = import.meta.env.VITE_BACKEND_HOST;
-const REST_BASE_URL = `http://${BACKEND_HOST}:8000`;
+const REST_BASE_URL = '';// `http://${BACKEND_HOST}:8000`;
 
 // ── REST helpers ──────────────────────────────────────────────────────────────
 
