@@ -2,11 +2,10 @@
 // Displays the annotated detection image returned by the backend.
 // Expected result shape: { image: "<base64 jpeg>" | null, ... }
 
-import { listenForResults } from '../api/detection.js';
-import { setHeaderStatus }  from './header.js';
+import { setHeaderStatus } from './header.js';
 
 /**
- * Mount the results panel into root and start listening for detections.
+ * Mount the results panel into root.
  * @param {HTMLElement} root
  */
 export function mountResults(root) {
@@ -55,16 +54,18 @@ export function mountResults(root) {
   `;
 
   root.appendChild(section);
-
-  listenForResults((result) => {
-    renderResult(section, result);
-    setHeaderStatus('connected');
-  });
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
+// ── Render — called externally after a POST response ─────────────────────────
 
-function renderResult(section, result) {
+/**
+ * Update the results panel with a detection result.
+ * @param {object} result — { image: string|null, count: number, detections: [] }
+ */
+export function showResult(result) {
+  const section     = document.getElementById('results-panel');
+  if (!section) return;
+
   const imgEl       = section.querySelector('#result-image');
   const placeholder = section.querySelector('#result-placeholder');
   const badge       = section.querySelector('#result-badge');
@@ -93,4 +94,6 @@ function renderResult(section, result) {
     badge.className   = 'text-[10px] tracking-widest text-neutral-500';
     countEl.textContent = '—';
   }
+
+  setHeaderStatus('connected');
 }

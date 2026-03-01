@@ -9,14 +9,14 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import cv2
 import modal
-from google import genai
+from groq import Groq
 from PIL import Image
 from dotenv import load_dotenv
 
 from runmodalcombined import route
 
 load_dotenv()
-_genai_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+_groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -38,14 +38,14 @@ PALETTE = [
 ]
 
 # ---------------------------------------------------------------------------
-# Gemini — map transcript to prompt(s) for route()
+# Groq — map transcript to prompt(s) for route()
 #
-# If the item matches a known YOLO class → output the exact class name.
-# If the item is real but unknown to YOLO → output a short descriptive phrase
+# If the item matches a known YOLO class -> output the exact class name.
+# If the item is real but unknown to YOLO -> output a short descriptive phrase
 #   suitable for SAM3 open-vocabulary search (e.g. "claw hammer", "hex wrench").
 # ---------------------------------------------------------------------------
 
-_GEMINI_MODEL = "gemini-2.0-flash"
+_GROQ_MODEL = "llama-3.3-70b-versatile"
 
 _MAP_PROMPT = """\
 You are a semantic mapper for a workshop object detector.
@@ -128,37 +128,46 @@ def map_to_prompts(transcript: str) -> list:
     """
     prompt = _MAP_PROMPT.format(transcript=transcript)
     try:
-        response = _genai_client.models.generate_content(model=_GEMINI_MODEL, contents=prompt)
-        lines = [ln.strip() for ln in response.text.strip().splitlines() if ln.strip()]
+        response = _groq_client.chat.completions.create(
+            model=_GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+        text = response.choices[0].message.content
+        lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
         for ln in lines:
-            print(f"[gemini]  -> \"{ln}\"")
+            print(f"[groq]  -> \"{ln}\"")
         return lines
     except Exception as e:
-        print(f"[gemini]  API error ({e}), skipping detection")
+        print(f"[groq]  API error ({e}), skipping detection")
         return []
 
 
 # ---------------------------------------------------------------------------
-# Grab a frame from the Raspberry Pi TCP stream or local webcam
+# Grab a frame from the client's WebSocket camera stream (spinCam.py)
 # ---------------------------------------------------------------------------
 
-def grab_frame(test_image_path: str = None) -> bytes:
+def grab_frame(test_image_path: str = None, client_ip: str = None) -> bytes:
     if test_image_path:
         return Path(test_image_path).read_bytes()
 
-    try:
-        with socket.create_connection((PI_HOST, PI_PORT), timeout=2) as sock:
-            raw_len = _recvall(sock, 4)
-            msg_len = struct.unpack(">L", raw_len)[0]
-            return _recvall(sock, msg_len)
-    except Exception:
-        pass
+    if client_ip:
+        try:
+            import websocket
+            ws = websocket.WebSocket()
+            ws.connect(f"ws://{client_ip}:9999", timeout=3)
+            frame = ws.recv()
+            ws.close()
+            print(f"[camera]  Got frame from client ws://{client_ip}:9999")
+            return frame
+        except Exception as e:
+            print(f"[camera]  Cannot reach client at {client_ip}:9999: {e}")
 
     cap = cv2.VideoCapture(0)
     ret, frame = cap.read()
     cap.release()
     if not ret:
-        raise RuntimeError("No camera available (Pi unreachable and no local webcam)")
+        raise RuntimeError("No camera available")
     _, buf = cv2.imencode(".jpg", frame)
     return buf.tobytes()
 
@@ -187,10 +196,10 @@ def show_result(composite: np.ndarray, prompts: list):
 # Entry point — accepts a transcript string directly
 # ---------------------------------------------------------------------------
 
-def run(transcript: str, image_path: str = None):
+def run(transcript: str, image_path: str = None, client_ip: str = None):
     """
     Main entry point. Call this with an already-transcribed string.
-    image_path is optional; falls back to Pi stream then local webcam.
+    client_ip: IP of the frontend machine running spinCam.py WebSocket server.
     """
     print(f"[transcript] \"{transcript}\"")
 
@@ -200,7 +209,7 @@ def run(transcript: str, image_path: str = None):
         return
 
     print("[camera]  Grabbing frame...")
-    img_bytes = grab_frame(image_path)
+    img_bytes = grab_frame(image_path, client_ip)
 
     yolo = modal.Cls.from_name("detect-tools-combined", "YoloSam2Detector")()
     sam3 = modal.Cls.from_name("detect-tools-combined", "Sam3Detector")()
