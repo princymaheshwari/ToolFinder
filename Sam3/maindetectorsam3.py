@@ -20,7 +20,7 @@ image = (
 
 app = modal.App("detect-tools-sam3", image=image)
 
-@app.cls(gpu="A10G")
+@app.cls(gpu="H100")
 class DetectTools:
 
     @modal.enter()
@@ -58,8 +58,8 @@ class DetectTools:
 
             results = self.processor.post_process_instance_segmentation(
                 outputs,
-                threshold=0.5,
-                mask_threshold=0.5,
+                threshold=0.35,
+                mask_threshold=0.35,
                 target_sizes=inputs.get("original_sizes").tolist(),
             )[0]
 
