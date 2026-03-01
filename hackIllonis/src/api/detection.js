@@ -1,12 +1,15 @@
 // ── Detection API ─────────────────────────────────────────────────────────────
 // Combines:
-//   • ws://localhost:9997  — receives detection result JSON from the backend
-//   • http://localhost:8000 — REST base for any HTTP requests
+//   • ws://<BACKEND_HOST>:8000/ws/detection — receives detection result JSON
+//   • http://<BACKEND_HOST>:8000            — REST base for HTTP requests
+//
+// Set BACKEND_HOST to the IP of the machine running server.py.
 
 import { createSocket } from './websocket.js';
 
-const DETECTION_WS_URL  = 'ws://localhost:9997';
-const REST_BASE_URL     = 'http://localhost:8000';
+const BACKEND_HOST      = import.meta.env.VITE_BACKEND_HOST;
+const DETECTION_WS_URL  = `ws://${BACKEND_HOST}:8000/ws/detection`;
+const REST_BASE_URL     = `http://${BACKEND_HOST}:8000`;
 
 let resultSocket = null;
 
