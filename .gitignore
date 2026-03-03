@@ -1,3 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.dll
+*.so
+*.pth
+.env
 # Environment variables - never commit secrets
 .env
 *.env
