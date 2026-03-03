@@ -1,0 +1,13 @@
+modal
+torch
+torchvision
+Pillow
+numpy
+transformers
+opencv-python
+open-clip-torch
+openai-whisper
+sounddevice
+google-generativeai
+python-dotenv
+torchaudio
