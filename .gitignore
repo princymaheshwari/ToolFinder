@@ -8,3 +8,21 @@ __pycache__/
 *.so
 *.pth
 .env
+# Environment variables - never commit secrets
+.env
+*.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Output/result images
+result.png
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# Node modules (frontend)
+node_modules/
