@@ -365,7 +365,7 @@ $$
 **Centroid** — mean of masked pixel coordinates (guaranteed to lie inside irregular shapes, which matters for servo pointing):
 
 $$
-c_x = \operatorname{mean}(x_s), \quad c_y = \operatorname{mean}(y_s), \quad \text{where } (y_s, x_s) = \operatorname{where}(mask)
+c_x = \text{mean}(x_s), \quad c_y = \text{mean}(y_s), \quad \text{where } (y_s, x_s) = \text{where}(mask)
 $$
 
 **Laser aiming** — yaw rotation and ray–plane intersection:
