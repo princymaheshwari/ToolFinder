@@ -1,28 +1,27 @@
+# Python
 .venv/
 venv/
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-*.dll
 *.so
 *.pth
-.env
-# Environment variables - never commit secrets
+*.dll
+
+# Secrets — never commit
 .env
 *.env
 
-# Python cache
-__pycache__/
-*.py[cod]
-*.pyo
+# OS cruft
+.DS_Store
+**/.DS_Store
 
-# Output/result images
-result.png
-*.jpg
-*.jpeg
-*.png
-*.webp
-
-# Node modules (frontend)
+# Node (frontend)
 node_modules/
+
+# Generated detection output (written to CWD at runtime)
+/result.png
+/app/result.png
+
+# NOTE: demo inputs/outputs live in assets/ and ARE intentionally tracked.

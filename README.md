@@ -9,8 +9,8 @@ It runs multiple large vision models in parallel on **Modal's serverless GPU inf
 Built at **HackIllinois 2026**.
 
 <p align="center">
-  <img src="result_test2_screwdriver.png" alt="Screwdriver detected and segmented" width="45%">
-  <img src="result_test2_saw.png" alt="Saw detected and segmented" width="45%">
+  <img src="assets/result_test2_screwdriver.png" alt="Screwdriver detected and segmented" width="45%">
+  <img src="assets/result_test2_saw.png" alt="Saw detected and segmented" width="45%">
 </p>
 
 ---
@@ -145,8 +145,8 @@ Both produce a clean transcript string.
 
 The transcript is sent to an **LLM semantic router** that performs entity extraction, context disambiguation, intent recognition, and class normalization.
 
-- Root `voice_agent.py` uses **Gemini 2.5-Flash**.
-- `Combined/voice_agent.py` uses **Groq (Llama-3.3-70B)**.
+- `app/voice_agent.py` (the current server pipeline) uses **Groq (Llama-3.3-70B)**.
+- `experiments/legacy-clip/voice_agent.py` (the legacy local-mic pipeline) uses **Gemini 2.5-Flash**.
 
 Known tools map to exact **YOLO class names**; unknown-but-real objects become short descriptive phrases for **SAM3 open-vocabulary** search. Each output line becomes a detection job.
 
@@ -173,7 +173,7 @@ The Modal app `detect-tools-combined` exposes two GPU classes:
 | `YoloSam2Detector` | A10G | YOLO detection + SAM2 (`facebook/sam-vit-large`) mask refinement |
 | `Sam3Detector` | H100 | SAM3 (`facebook/sam3`) open-vocabulary segmentation |
 
-**Dynamic routing** (`Combined/runmodalcombined.py`):
+**Dynamic routing** (`app/runmodalcombined.py`):
 
 - Structured classes → **YOLO + SAM2** refinement.
 - Unknown objects → **SAM3** open-vocabulary segmentation.
@@ -183,7 +183,7 @@ Multiple prompts are dispatched concurrently via a `ThreadPoolExecutor`, and the
 
 ### 5️⃣ Hardware Extension — Laser Pointer Rig
 
-Mask centroids are fed to a dual-servo (yaw + pitch) laser system. Inverse kinematics are solved numerically to aim a physical dot at the detected object (see [`camTest/kinematics.py`](camTest/kinematics.py) and [`rasPiCode/servo.py`](rasPiCode/servo.py)).
+Mask centroids are fed to a dual-servo (yaw + pitch) laser system. Inverse kinematics are solved numerically to aim a physical dot at the detected object (see [`hardware/camera/kinematics.py`](hardware/camera/kinematics.py) and [`hardware/pi/servo.py`](hardware/pi/servo.py)).
 
 ---
 
@@ -218,29 +218,31 @@ Anything outside this set is handled open-vocabulary by SAM3.
 
 ```
 ToolFinder/
-├── Combined/                 # ⭐ Integrated pipeline (primary)
-│   ├── server.py             #    FastAPI: POST /detect + WS /ws/detection
-│   ├── voice_agent.py        #    Groq router + frame capture + orchestration
-│   ├── runmodalcombined.py   #    Per-class routing → YOLO / SAM2 / SAM3
-│   └── maindetectorcombined.py #  Modal app: YoloSam2Detector + Sam3Detector
+├── README.md
+├── app/                        # ⭐ Canonical pipeline (the shipping product)
+│   ├── server.py               #    FastAPI: POST /detect + WS /ws/detection
+│   ├── voice_agent.py          #    Groq router + frame capture + orchestration
+│   ├── runmodalcombined.py     #    Per-class routing → YOLO / SAM2 / SAM3
+│   ├── maindetectorcombined.py #    Modal app: YoloSam2Detector + Sam3Detector
+│   └── requirements.txt        #    Canonical Python deps (Groq + FastAPI)
 │
-├── hackIllonis/              # Frontend (Vite + vanilla JS + Tailwind)
-│   └── src/{api,components}   #    WebSockets, camera grid, speech, results
+├── frontend/                   # Vite + vanilla JS + Tailwind
+│   └── src/{api,components}     #    WebSockets, camera grid, speech, results
 │
-├── Yolo+Sam2/                # Standalone detection variants (experiments)
-├── Sam3/
-├── Sam2+Dino/
-├── modal/ , modalSAM3Test/   # Modal experiments
+├── hardware/
+│   ├── pi/                     # Runs on the Pi: camera TCP stream + servo control
+│   ├── host/                   # Host-side camera / RealSense receivers
+│   └── camera/                 # Camera capture, kinematics, laser-aim bridge
 │
-├── rasPiCode/                # Pi: camera TCP stream + servo control
-├── compRasiCode/             # Companion-computer camera / RealSense receivers
-├── camTest/                  # Camera + kinematics + laser-aim bridge
-├── torchPointer/             # Torch-based pointer math
+├── experiments/                # Archived spikes & superseded pipelines
+│   ├── legacy-clip/            #    Older Gemini + CLIP single-model pipeline
+│   ├── sam2-dino/              #    GroundingDINO + SAM2 variant
+│   ├── sam3/                   #    SAM3-only variant
+│   ├── yolo-sam2/              #    YOLO + SAM2 variant
+│   ├── modal-spike/            #    Early Modal / SAM3 test scripts
+│   └── torch-pointer/          #    Pygame/OpenGL aim visualizer
 │
-├── voice_agent.py            # Local-mic pipeline (Whisper + silero-VAD + Gemini)
-├── runmodal.py, runmodalsam3.py
-├── requirements.txt
-└── test*.jpg, result*.png    # Sample inputs / annotated outputs
+└── assets/                     # Demo inputs (test*.jpg) + sample outputs (result*.png)
 ```
 
 ---
@@ -257,20 +259,20 @@ ToolFinder/
 ### 1. Deploy the GPU backend to Modal
 
 ```bash
-pip install -r requirements.txt
+pip install -r app/requirements.txt
 
 # Create Modal secrets used by the detectors
 modal secret create roboflow      ROBOFLOW_API_KEY=...
 modal secret create huggingface   HF_TOKEN=...
 
 # Deploy the detection app (YoloSam2Detector on A10G, Sam3Detector on H100)
-modal deploy Combined/maindetectorcombined.py
+modal deploy app/maindetectorcombined.py
 ```
 
 You can smoke-test the pipeline directly against a still image:
 
 ```bash
-python Combined/runmodalcombined.py test4.jpg Clutter Camera "Motor Controllers"
+python app/runmodalcombined.py assets/test4.jpg Clutter Camera "Motor Controllers"
 # → writes result.png with all overlays composited
 ```
 
@@ -278,13 +280,13 @@ python Combined/runmodalcombined.py test4.jpg Clutter Camera "Motor Controllers"
 
 ```bash
 # .env with GROQ_API_KEY=... (and/or GEMINI_API_KEY=...)
-python Combined/server.py          # serves on http://0.0.0.0:8000
+python app/server.py               # serves on http://0.0.0.0:8000
 ```
 
 ### 3. Run the frontend
 
 ```bash
-cd hackIllonis
+cd frontend
 npm install
 npm run dev                         # http://localhost:5173
 ```
@@ -296,7 +298,7 @@ npm run dev                         # http://localhost:5173
 Skip the browser and drive the pipeline straight from a mic + still image:
 
 ```bash
-python voice_agent.py test.jpg      # Whisper + silero-VAD + Gemini
+python experiments/legacy-clip/voice_agent.py assets/test.jpg   # Whisper + silero-VAD + Gemini
 ```
 
 ---
@@ -305,14 +307,14 @@ python voice_agent.py test.jpg      # Whisper + silero-VAD + Gemini
 
 | Name | Used by | Purpose |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | root `voice_agent.py` | Gemini 2.5-Flash semantic routing |
-| `GROQ_API_KEY` | `Combined/voice_agent.py` | Groq Llama-3.3-70B semantic routing |
+| `GEMINI_API_KEY` | `experiments/legacy-clip/voice_agent.py` | Gemini 2.5-Flash semantic routing |
+| `GROQ_API_KEY` | `app/voice_agent.py` | Groq Llama-3.3-70B semantic routing |
 | `HF_TOKEN` | Modal secret `huggingface` | Download SAM3 (`facebook/sam3`) |
 | `ROBOFLOW_API_KEY` | Modal secret `roboflow` | Load the custom YOLO model |
 
 Secrets are loaded from a `.env` file (`python-dotenv`) locally and from **Modal Secrets** in the GPU containers. `.env` is git-ignored — **never commit keys**.
 
-Frontend knobs live at the top of the `hackIllonis/src/api/*.js` files (camera ports, detection WS URL, REST base URL). Keep the `TOOLS` list in `src/components/speech.js` in sync with the Python class list.
+Frontend knobs live at the top of the `frontend/src/api/*.js` files (camera ports, detection WS URL, REST base URL). Keep the `TOOLS` list in `src/components/speech.js` in sync with the Python class list.
 
 ---
 
@@ -389,9 +391,9 @@ Inverse kinematics for the two servos are solved via numerical optimization.
 
 ## 🔴 Hardware — Laser Pointer Rig
 
-- **Camera source:** Raspberry Pi streams JPEG frames over length-prefixed TCP on port `9999` ([`rasPiCode/streamSender.py`](rasPiCode/streamSender.py)).
-- **Actuation:** dual-servo yaw/pitch mount driven by `gpiozero` ([`rasPiCode/servo.py`](rasPiCode/servo.py)).
-- **Aiming:** centroids → world coordinates → servo angles via the kinematics model in [`camTest/kinematics.py`](camTest/kinematics.py).
+- **Camera source:** Raspberry Pi streams JPEG frames over length-prefixed TCP on port `9999` ([`hardware/pi/streamSender.py`](hardware/pi/streamSender.py)).
+- **Actuation:** dual-servo yaw/pitch mount driven by `gpiozero` ([`hardware/pi/servo.py`](hardware/pi/servo.py)).
+- **Aiming:** centroids → world coordinates → servo angles via the kinematics model in [`hardware/camera/kinematics.py`](hardware/camera/kinematics.py).
 
 ---
 
